@@ -264,10 +264,8 @@ else:
                             )
                             
                             if success:
-                                # Update database first
-                                db.update_process_vacancy(process_name, -1)
-                                
                                 # Reload the process data from database to ensure it's up to date
+                                # (vacancy is already updated in the add_employee function)
                                 st.session_state.process_data = db.load_processes_from_db()
                                 
                                 st.success(f"Successfully assigned {employee_name} to {process_name}!")

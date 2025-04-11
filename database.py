@@ -165,10 +165,20 @@ def add_employee(name, email, potential, communication, process_name=None):
     process_id = None
     if process_name:
         # Get process ID
-        cursor.execute("SELECT id FROM processes WHERE process_name = ?", (process_name,))
+        cursor.execute("SELECT id, vacancy FROM processes WHERE process_name = ?", (process_name,))
         result = cursor.fetchone()
         if result:
             process_id = result[0]
+            current_vacancy = result[1]
+            
+            # Check if there's still vacancy available
+            if current_vacancy <= 0:
+                conn.close()
+                return False, f"No vacancy available in {process_name}"
+            
+            # Update vacancy count directly here
+            cursor.execute("UPDATE processes SET vacancy = vacancy - 1 WHERE process_name = ?", 
+                         (process_name,))
     
     try:
         # Add employee
@@ -311,19 +321,35 @@ def update_employee(employee_id, name, email, potential, communication, process_
     if old_process != process_name:
         # Increase vacancy for old process if there was one
         if old_process:
-            update_process_vacancy(old_process, 1)
+            cursor.execute("UPDATE processes SET vacancy = vacancy + 1 WHERE process_name = ?", 
+                          (old_process,))
         
-        # Decrease vacancy for new process if there is one
+        # Get process ID and check vacancy for the new process
+        process_id = None
         if process_name:
-            update_process_vacancy(process_name, -1)
-    
-    # Get process ID for the new process
-    process_id = None
-    if process_name:
-        cursor.execute("SELECT id FROM processes WHERE process_name = ?", (process_name,))
-        result = cursor.fetchone()
-        if result:
-            process_id = result[0]
+            cursor.execute("SELECT id, vacancy FROM processes WHERE process_name = ?", (process_name,))
+            result = cursor.fetchone()
+            if result:
+                process_id = result[0]
+                current_vacancy = result[1]
+                
+                # Check if there's vacancy available
+                if current_vacancy <= 0:
+                    conn.close()
+                    return False, f"No vacancy available in {process_name}"
+                
+                # Decrease vacancy for new process
+                cursor.execute("UPDATE processes SET vacancy = vacancy - 1 WHERE process_name = ?", 
+                             (process_name,))
+    else:
+        # No change in process assignment
+        # Get process ID for the current process
+        process_id = None
+        if process_name:
+            cursor.execute("SELECT id FROM processes WHERE process_name = ?", (process_name,))
+            result = cursor.fetchone()
+            if result:
+                process_id = result[0]
     
     try:
         # Update employee
@@ -371,7 +397,8 @@ def delete_employee(employee_id):
     
     # Update process vacancy if employee was assigned
     if process_name:
-        update_process_vacancy(process_name, 1)
+        cursor.execute("UPDATE processes SET vacancy = vacancy + 1 WHERE process_name = ?", 
+                      (process_name,))
     
     conn.commit()
     conn.close()
