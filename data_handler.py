@@ -14,9 +14,25 @@ def load_data(file):
     """
     # Check file extension
     if file.name.endswith('.xlsx'):
-        data = pd.read_excel(file)
+        try:
+            data = pd.read_excel(file)
+            # Save a copy of the file for debugging
+            with open(f"processed_uploads/{file.name}", "wb") as f:
+                file.seek(0)
+                f.write(file.getvalue())
+                file.seek(0)
+        except Exception as e:
+            raise ValueError(f"Error reading Excel file: {str(e)}")
     elif file.name.endswith('.csv'):
-        data = pd.read_csv(file)
+        try:
+            data = pd.read_csv(file)
+            # Save a copy of the file for debugging
+            with open(f"processed_uploads/{file.name}", "wb") as f:
+                file.seek(0)
+                f.write(file.getvalue())
+                file.seek(0)
+        except Exception as e:
+            raise ValueError(f"Error reading CSV file: {str(e)}")
     else:
         raise ValueError("Unsupported file format. Please upload an Excel (.xlsx) or CSV (.csv) file.")
     
@@ -36,18 +52,22 @@ def load_data(file):
     
     # Validate potential values
     valid_potentials = ['Sales', 'Consultation', 'Service', 'Support']
+    # Convert to string and strip any whitespace
+    data['Potential'] = data['Potential'].astype(str).str.strip()
     invalid_potentials = data[~data['Potential'].isin(valid_potentials)]['Potential'].unique()
     
     if len(invalid_potentials) > 0:
-        raise ValueError(f"Invalid potential values found: {', '.join(invalid_potentials)}. "
+        raise ValueError(f"Invalid potential values found: {', '.join(map(str, invalid_potentials))}. "
                          f"Valid values are: {', '.join(valid_potentials)}")
     
     # Validate communication values
     valid_communications = ['Excellent', 'Very Good', 'Good']
+    # Convert to string and strip any whitespace
+    data['Communication'] = data['Communication'].astype(str).str.strip()
     invalid_communications = data[~data['Communication'].isin(valid_communications)]['Communication'].unique()
     
     if len(invalid_communications) > 0:
-        raise ValueError(f"Invalid communication values found: {', '.join(invalid_communications)}. "
+        raise ValueError(f"Invalid communication values found: {', '.join(map(str, invalid_communications))}. "
                          f"Valid values are: {', '.join(valid_communications)}")
     
     return data
