@@ -206,41 +206,56 @@ else:
                         st.subheader("Available Matching Processes (Sorted by Vacancy)")
                         st.dataframe(matching_processes, use_container_width=True)
                         
-                        # Let user select which process to assign
-                        process_col1, process_col2 = st.columns([3, 1])
+                        # Display processes with an 'Add' button for each process
+                        st.subheader("Available Matching Processes (Select one to assign)")
                         
-                        with process_col1:
-                            selected_process = st.selectbox(
-                                "Select Process to Assign",
-                                options=matching_processes['Process_Name'].tolist()
-                            )
+                        # Create a DataFrame with an additional "Action" column
+                        # We'll use this custom dataframe view with buttons
+                        processes_with_actions = matching_processes.copy()
                         
-                        with process_col2:
-                            if st.button("Assign Employee", type="primary"):
-                                # Add employee to the database with selected process
-                                success, message = db.add_employee(
-                                    employee_name, 
-                                    employee_email,
-                                    potential, 
-                                    communication, 
-                                    selected_process
-                                )
-                                
-                                if success:
-                                    # Update vacancy in session state
-                                    process_idx = st.session_state.process_data[
-                                        st.session_state.process_data['Process_Name'] == selected_process
-                                    ].index[0]
+                        # Display the processes
+                        for i, row in processes_with_actions.iterrows():
+                            process_name = row['Process_Name']
+                            vacancy = row['Vacancy']
+                            potential_val = row['Potential']
+                            comm_val = row['Communication']
+                            
+                            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                            
+                            with col1:
+                                st.write(f"**{process_name}**")
+                            with col2:
+                                st.write(f"Potential: {potential_val}")
+                            with col3:
+                                st.write(f"Communication: {comm_val}")
+                            with col4:
+                                if st.button(f"Add to {process_name}", key=f"add_{i}"):
+                                    # Add employee to the database with selected process
+                                    success, message = db.add_employee(
+                                        employee_name, 
+                                        employee_email,
+                                        potential, 
+                                        communication, 
+                                        process_name
+                                    )
                                     
-                                    st.session_state.process_data.at[process_idx, 'Vacancy'] -= 1
-                                    
-                                    # Update database
-                                    db.update_process_vacancy(selected_process, -1)
-                                    
-                                    st.success(f"Successfully assigned {employee_name} to {selected_process}!")
-                                    st.rerun()
-                                else:
-                                    st.error(message)
+                                    if success:
+                                        # Update vacancy in session state
+                                        process_idx = st.session_state.process_data[
+                                            st.session_state.process_data['Process_Name'] == process_name
+                                        ].index[0]
+                                        
+                                        st.session_state.process_data.at[process_idx, 'Vacancy'] -= 1
+                                        
+                                        # Update database
+                                        db.update_process_vacancy(process_name, -1)
+                                        
+                                        st.success(f"Successfully assigned {employee_name} to {process_name}!")
+                                        st.rerun()
+                                    else:
+                                        st.error(message)
+                            
+                            st.divider()
                     else:
                         st.error("No matching processes found with available vacancies")
                         
@@ -272,41 +287,46 @@ else:
         # Search by email
         email_search = st.text_input("Enter Employee Email to Find")
         
-        if email_search:
-            employee = db.find_employee_by_email(email_search)
-            
-            if employee:
-                st.success(f"Found employee: {employee['name']}")
+        search_clicked = st.button("Search for Employee")
+        
+        if email_search and search_clicked:
+            try:
+                employee = db.find_employee_by_email(email_search)
                 
-                # Display employee info
-                employee_info = pd.DataFrame([{
-                    'Name': employee['name'],
-                    'Email': employee['email'],
-                    'Potential': employee['potential'],
-                    'Communication': employee['communication'],
-                    'Process': employee['process_name'] or 'Not Assigned'
-                }])
-                
-                st.dataframe(employee_info, use_container_width=True)
-                
-                # Edit and Delete buttons
-                edit_col, delete_col = st.columns(2)
-                
-                with edit_col:
-                    if st.button("Edit Employee"):
-                        st.session_state.employee_to_edit = employee
-                
-                with delete_col:
-                    if st.button("Delete Employee", type="primary"):
-                        if st.checkbox("I confirm I want to delete this employee"):
-                            success, message = db.delete_employee(employee['id'])
-                            if success:
-                                st.success(message)
-                                st.rerun()
-                            else:
-                                st.error(message)
-            else:
-                st.error("No employee found with that email")
+                if employee:
+                    st.success(f"Found employee: {employee['name']}")
+                    
+                    # Display employee info
+                    employee_info = pd.DataFrame([{
+                        'Name': employee['name'],
+                        'Email': employee['email'],
+                        'Potential': employee['potential'],
+                        'Communication': employee['communication'],
+                        'Process': employee['process_name'] or 'Not Assigned'
+                    }])
+                    
+                    st.dataframe(employee_info, use_container_width=True)
+                    
+                    # Edit and Delete buttons
+                    edit_col, delete_col = st.columns(2)
+                    
+                    with edit_col:
+                        if st.button("Edit Employee"):
+                            st.session_state.employee_to_edit = employee
+                    
+                    with delete_col:
+                        if st.button("Delete Employee", type="primary"):
+                            if st.checkbox("I confirm I want to delete this employee"):
+                                success, message = db.delete_employee(employee['id'])
+                                if success:
+                                    st.success(message)
+                                    st.rerun()
+                                else:
+                                    st.error(message)
+                else:
+                    st.error(f"No employee found with email: {email_search}")
+            except Exception as e:
+                st.error(f"Error while searching: {str(e)}")
         
         # Edit employee form
         if st.session_state.employee_to_edit:

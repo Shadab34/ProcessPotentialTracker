@@ -8,6 +8,10 @@ DB_PATH = 'employee_process_matcher.db'
 
 def init_db():
     """Initialize the database with required tables if they don't exist."""
+    # Remove existing database to ensure we have the correct schema
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
+        
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
