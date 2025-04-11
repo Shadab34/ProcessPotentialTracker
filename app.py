@@ -37,9 +37,14 @@ if 'employee_to_edit' not in st.session_state:
 if 'show_reset_db' not in st.session_state:
     st.session_state.show_reset_db = False
     
-# Function to refresh data from database
+if 'refresh_counter' not in st.session_state:
+    st.session_state.refresh_counter = 0
+    
+# Function to force refresh data from database
 def refresh_data():
     st.session_state.process_data = db.load_processes_from_db()
+    # Increment refresh counter to trigger reactive reloads
+    st.session_state.refresh_counter += 1
 
 # Title and description
 st.title("Employee-Process Matcher")
@@ -123,11 +128,20 @@ if st.session_state.process_data is None:
             st.error(f"Error loading sample data: {str(e)}")
     
 else:
+    # Always reload fresh data to ensure we have the latest vacancy counts
+    # This ensures the main UI always shows current data
+    refresh_data()
+    
     # Display process data
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.subheader("Process Data")
+        
+        # Add a refresh button to force UI updates
+        if st.button("↻ Refresh Data"):
+            refresh_data()
+            st.success("Data refreshed!")
         
         # Filter controls
         filter_col1, filter_col2 = st.columns(2)
@@ -154,19 +168,19 @@ else:
         if communication_filter and 'All' not in communication_filter:
             filtered_data = filtered_data[filtered_data['Communication'].isin(communication_filter)]
         
-        # Display filtered data
-        st.dataframe(filtered_data, use_container_width=True)
+        # Display filtered data - add key based on refresh counter to force updates
+        st.dataframe(filtered_data, use_container_width=True, key=f"process_data_{st.session_state.refresh_counter}")
     
     with col2:
         st.subheader("Vacancy Overview")
         
-        # Create a vacancy chart
+        # Create a vacancy chart - add key based on refresh counter to force updates
         fig = create_vacancy_chart(st.session_state.process_data)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"vacancy_chart_{st.session_state.refresh_counter}")
         
         # Create a potential distribution chart
         fig2 = create_process_distribution(st.session_state.process_data)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True, key=f"distribution_chart_{st.session_state.refresh_counter}")
     
     # Add sidebar button for find employee
     if st.session_state.process_data is not None:
