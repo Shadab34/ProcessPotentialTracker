@@ -145,12 +145,20 @@ def add_employee(name, email, potential, communication, process_name=None):
         bool: True if successful, False otherwise
         str: Error message if any
     """
+    # Clean up the database first to ensure deleted emails are purged
+    purge_deleted_emails()
+    
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Check if email already exists
-    cursor.execute("SELECT id FROM employees WHERE email = ?", (email,))
-    if cursor.fetchone():
+    # Normalize the email to ensure case insensitivity
+    email = email.strip().lower()
+    
+    # Check if email already exists with more thorough check
+    cursor.execute("SELECT COUNT(*) FROM employees WHERE LOWER(email) = LOWER(?)", (email,))
+    count = cursor.fetchone()[0]
+    
+    if count > 0:
         conn.close()
         return False, "Email already exists in the database"
     
@@ -235,11 +243,14 @@ def find_employee_by_email(email):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
+    # Normalize email for case-insensitive search
+    email = email.strip().lower()
+    
     cursor.execute("""
         SELECT e.id, e.name, e.email, e.potential, e.communication, 
                e.process_id, e.process_name
         FROM employees e
-        WHERE e.email = ?
+        WHERE LOWER(e.email) = LOWER(?)
     """, (email,))
     
     result = cursor.fetchone()
@@ -273,11 +284,17 @@ def update_employee(employee_id, name, email, potential, communication, process_
         bool: True if successful, False otherwise
         str: Error message if any
     """
+    # Clean up the database first
+    purge_deleted_emails()
+    
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Check if email already exists for another employee
-    cursor.execute("SELECT id FROM employees WHERE email = ? AND id != ?", (email, employee_id))
+    # Normalize email for case-insensitive comparison
+    email = email.strip().lower()
+    
+    # Check if email already exists for another employee (case insensitive)
+    cursor.execute("SELECT id FROM employees WHERE LOWER(email) = LOWER(?) AND id != ?", (email, employee_id))
     if cursor.fetchone():
         conn.close()
         return False, "Email already exists for another employee"
@@ -338,8 +355,8 @@ def delete_employee(employee_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Get the employee's process to update vacancy
-    cursor.execute("SELECT process_name FROM employees WHERE id = ?", (employee_id,))
+    # Get the employee's process and email to update vacancy
+    cursor.execute("SELECT process_name, email FROM employees WHERE id = ?", (employee_id,))
     result = cursor.fetchone()
     
     if not result:
@@ -347,6 +364,7 @@ def delete_employee(employee_id):
         return False, "Employee not found"
     
     process_name = result[0]
+    email = result[1]
     
     # Delete the employee
     cursor.execute("DELETE FROM employees WHERE id = ?", (employee_id,))
@@ -357,7 +375,20 @@ def delete_employee(employee_id):
     
     conn.commit()
     conn.close()
+    
+    # Force database cleaning to remove the deleted employee email
+    purge_deleted_emails()
+    
     return True, f"Employee deleted and process '{process_name}' vacancy updated"
+
+def purge_deleted_emails():
+    """Force cleanup of database to remove any lingering deleted emails"""
+    # This function will force SQLite to vacuum the database
+    # which should help with the issue of deleted emails still being detected
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("VACUUM")
+    conn.commit()
+    conn.close()
 
 def get_process_suggestions(potential, communication):
     """

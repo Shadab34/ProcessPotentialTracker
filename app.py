@@ -264,15 +264,11 @@ else:
                             )
                             
                             if success:
-                                # Update vacancy in session state
-                                process_idx = st.session_state.process_data[
-                                    st.session_state.process_data['Process_Name'] == process_name
-                                ].index[0]
-                                
-                                st.session_state.process_data.at[process_idx, 'Vacancy'] -= 1
-                                
-                                # Update database
+                                # Update database first
                                 db.update_process_vacancy(process_name, -1)
+                                
+                                # Reload the process data from database to ensure it's up to date
+                                st.session_state.process_data = db.load_processes_from_db()
                                 
                                 st.success(f"Successfully assigned {employee_name} to {process_name}!")
                                 st.session_state.show_process_list = False
@@ -349,6 +345,9 @@ else:
                             if st.checkbox("I confirm I want to delete this employee"):
                                 success, message = db.delete_employee(employee['id'])
                                 if success:
+                                    # Reload process data to reflect updated vacancies
+                                    st.session_state.process_data = db.load_processes_from_db()
+                                    
                                     st.success(message)
                                     st.rerun()
                                 else:
@@ -385,7 +384,9 @@ else:
                     )
                     
                     # Get all processes
-                    processes = st.session_state.process_data['Process_Name'].tolist()
+                    processes = []
+                    if st.session_state.process_data is not None:
+                        processes = st.session_state.process_data['Process_Name'].tolist()
                     processes.insert(0, 'None')
                     
                     # Determine the index for the current process
@@ -418,6 +419,9 @@ else:
                     )
                     
                     if success:
+                        # Reload the process data to reflect any vacancy changes
+                        st.session_state.process_data = db.load_processes_from_db()
+                        
                         st.success(message)
                         st.session_state.employee_to_edit = None
                         st.rerun()
