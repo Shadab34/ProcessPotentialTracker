@@ -8,6 +8,7 @@ from io import BytesIO
 from data_handler import load_data, save_data
 from matching_engine import find_matching_process
 from visualization import create_vacancy_chart, create_process_distribution
+import database as db
 
 # Set page config
 st.set_page_config(
@@ -18,9 +19,14 @@ st.set_page_config(
 
 # Initialize session state variables
 if 'process_data' not in st.session_state:
-    st.session_state.process_data = None
+    # Try to load from database first
+    st.session_state.process_data = db.load_processes_from_db()
+    
 if 'show_add_employee' not in st.session_state:
     st.session_state.show_add_employee = False
+    
+if 'show_history' not in st.session_state:
+    st.session_state.show_history = False
 
 # Title and description
 st.title("Employee-Process Matcher")
@@ -41,6 +47,10 @@ with st.sidebar:
         if uploaded_file is not None:
             try:
                 st.session_state.process_data = load_data(uploaded_file)
+                
+                # Save to database
+                db.save_processes_to_db(st.session_state.process_data)
+                
                 st.success(f"Successfully loaded {len(st.session_state.process_data)} processes!")
             except Exception as e:
                 st.error(f"Error loading data: {str(e)}")
@@ -60,9 +70,15 @@ with st.sidebar:
     st.divider()
     
     if st.session_state.process_data is not None:
-        st.button("Add New Employee", 
-                 on_click=lambda: setattr(st.session_state, 'show_add_employee', True),
-                 use_container_width=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.button("Add New Employee", 
+                     on_click=lambda: setattr(st.session_state, 'show_add_employee', True),
+                     use_container_width=True)
+        with col2:
+            st.button("View History", 
+                     on_click=lambda: setattr(st.session_state, 'show_history', True),
+                     use_container_width=True)
 
 # Main content area
 if st.session_state.process_data is None:
@@ -77,6 +93,21 @@ if st.session_state.process_data is None:
         'Vacancy': [5, 3, 4, 2]
     })
     st.dataframe(sample_data, use_container_width=True)
+    
+    # Option to use sample data
+    if st.button("Use Sample Data", type="primary"):
+        try:
+            sample_path = "sample_data/sample_processes.csv"
+            sample_df = pd.read_csv(sample_path)
+            st.session_state.process_data = sample_df
+            
+            # Save to database
+            db.save_processes_to_db(sample_df)
+            
+            st.success(f"Sample data loaded successfully with {len(sample_df)} processes!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error loading sample data: {str(e)}")
     
 else:
     # Display process data
@@ -159,21 +190,77 @@ else:
                     )
                     
                     if matching_process is not None:
-                        st.success(f"Match found! {employee_name} can be assigned to: {matching_process['Process_Name']}")
+                        process_name = matching_process['Process_Name']
+                        st.success(f"Match found! {employee_name} can be assigned to: {process_name}")
                         
-                        # Update vacancy
+                        # Update vacancy in session state
                         process_idx = st.session_state.process_data[
-                            st.session_state.process_data['Process_Name'] == matching_process['Process_Name']
+                            st.session_state.process_data['Process_Name'] == process_name
                         ].index[0]
                         
                         st.session_state.process_data.at[process_idx, 'Vacancy'] -= 1
                         
+                        # Update database
+                        db.update_process_vacancy(process_name, -1)
+                        
+                        # Add employee to database
+                        db.add_employee(employee_name, potential, communication, process_name)
+                        
                         # Display the updated process
                         st.dataframe(st.session_state.process_data.iloc[[process_idx]], use_container_width=True)
                     else:
+                        # Still record the employee, but with no process assignment
+                        db.add_employee(employee_name, potential, communication)
                         st.error("No Match Found - No process matches these skills or all matching processes have 0 vacancies.")
         
         # Button to close the form
         if st.button("Close Form"):
             st.session_state.show_add_employee = False
+            st.rerun()
+    
+    # History view
+    if st.session_state.show_history:
+        st.divider()
+        st.subheader("Employee Assignment History")
+        
+        # Get employee history from database
+        employee_data = db.get_employee_assignments()
+        
+        if employee_data.empty:
+            st.info("No employee assignments found in the database.")
+        else:
+            # Format date column
+            if 'assigned_at' in employee_data.columns:
+                employee_data['assigned_at'] = pd.to_datetime(
+                    employee_data['assigned_at']).dt.strftime('%Y-%m-%d %H:%M')
+            
+            # Display the assignments
+            st.dataframe(employee_data, use_container_width=True)
+            
+            # Get summary statistics
+            history_summary = db.get_assignment_history()
+            
+            if not history_summary.empty:
+                st.subheader("Assignment Summary by Date")
+                
+                # Create a bar chart of assignments by date
+                fig = px.bar(
+                    history_summary,
+                    x='assignment_date',
+                    y=['successful_matches', 'no_matches'],
+                    title='Employee Assignments by Date',
+                    labels={'value': 'Number of Employees', 'assignment_date': 'Date'},
+                    barmode='group',
+                    color_discrete_map={
+                        'successful_matches': 'green',
+                        'no_matches': 'red'
+                    }
+                )
+                
+                fig.update_layout(legend_title_text='Result')
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Button to close the view
+        if st.button("Close History"):
+            st.session_state.show_history = False
             st.rerun()
