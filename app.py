@@ -33,6 +33,13 @@ if 'show_find_employee' not in st.session_state:
     
 if 'employee_to_edit' not in st.session_state:
     st.session_state.employee_to_edit = None
+    
+if 'show_reset_db' not in st.session_state:
+    st.session_state.show_reset_db = False
+    
+# Function to refresh data from database
+def refresh_data():
+    st.session_state.process_data = db.load_processes_from_db()
 
 # Title and description
 st.title("Employee-Process Matcher")
@@ -164,9 +171,17 @@ else:
     # Add sidebar button for find employee
     if st.session_state.process_data is not None:
         st.sidebar.divider()
-        st.sidebar.button("Find/Edit Employee", 
-                on_click=lambda: setattr(st.session_state, 'show_find_employee', True),
-                use_container_width=True)
+        
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            st.button("Find/Edit Employee", 
+                    on_click=lambda: setattr(st.session_state, 'show_find_employee', True),
+                    use_container_width=True)
+                    
+        with col2:
+            st.button("Reset Database", type="primary",
+                    on_click=lambda: setattr(st.session_state, 'show_reset_db', True),
+                    use_container_width=True)
     
     # Add new employee form
     if st.session_state.show_add_employee:
@@ -431,6 +446,35 @@ else:
             st.session_state.show_find_employee = False
             st.session_state.employee_to_edit = None
             st.rerun()
+    
+    # Reset Database confirmation dialog
+    if st.session_state.show_reset_db:
+        st.divider()
+        st.subheader("Reset Database", divider="red")
+        st.warning("⚠️ This will permanently delete all employee and process data and reset the database to its initial state. This action cannot be undone!")
+        
+        confirm_col1, confirm_col2 = st.columns([3, 1])
+        with confirm_col1:
+            confirmation = st.text_input("Type 'RESET' to confirm database reset:")
+        with confirm_col2:
+            if st.button("Reset Database", type="primary") and confirmation == "RESET":
+                # Reset the database
+                db.reset_database()
+                
+                # Clear session state
+                st.session_state.process_data = None
+                st.session_state.show_add_employee = False
+                st.session_state.show_find_employee = False 
+                st.session_state.show_history = False
+                st.session_state.show_process_list = False
+                st.session_state.employee_to_edit = None
+                st.session_state.show_reset_db = False
+                
+                st.success("Database has been reset successfully!")
+                st.rerun()
+            elif st.button("Cancel Reset"):
+                st.session_state.show_reset_db = False
+                st.rerun()
     
     # History view
     if st.session_state.show_history:

@@ -416,6 +416,24 @@ def purge_deleted_emails():
     conn.execute("VACUUM")
     conn.commit()
     conn.close()
+    
+def reset_database():
+    """Hard reset of the database - for emergency use"""
+    import os
+    
+    # Close any open connections
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.close()
+    except:
+        pass
+    
+    # Delete the database file if it exists
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
+    
+    # Recreate the database
+    init_db()
 
 def get_process_suggestions(potential, communication):
     """
