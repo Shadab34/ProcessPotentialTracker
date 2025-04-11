@@ -173,106 +173,136 @@ else:
         st.divider()
         st.subheader("Add New Employee")
         
+        # Use session state to store employee data temporarily
+        if 'temp_employee_name' not in st.session_state:
+            st.session_state.temp_employee_name = ""
+        if 'temp_employee_email' not in st.session_state:
+            st.session_state.temp_employee_email = ""
+        if 'temp_potential' not in st.session_state:
+            st.session_state.temp_potential = "Sales"
+        if 'temp_communication' not in st.session_state:
+            st.session_state.temp_communication = "Excellent"
+        if 'show_process_list' not in st.session_state:
+            st.session_state.show_process_list = False
+            
+        # Input form for employee details
         with st.form("employee_form"):
             col1, col2 = st.columns(2)
             
             with col1:
-                employee_name = st.text_input("Employee Name")
-                employee_email = st.text_input("Employee Email (unique)")
-                potential = st.selectbox(
+                st.session_state.temp_employee_name = st.text_input("Employee Name", value=st.session_state.temp_employee_name)
+                st.session_state.temp_employee_email = st.text_input("Employee Email (unique)", value=st.session_state.temp_employee_email)
+                st.session_state.temp_potential = st.selectbox(
                     "Potential",
-                    options=['Sales', 'Consultation', 'Service', 'Support']
+                    options=['Sales', 'Consultation', 'Service', 'Support'],
+                    index=['Sales', 'Consultation', 'Service', 'Support'].index(st.session_state.temp_potential)
                 )
             
             with col2:
-                communication = st.selectbox(
+                st.session_state.temp_communication = st.selectbox(
                     "Communication",
-                    options=['Excellent', 'Very Good', 'Good']
+                    options=['Excellent', 'Very Good', 'Good'],
+                    index=['Excellent', 'Very Good', 'Good'].index(st.session_state.temp_communication)
                 )
             
             submitted = st.form_submit_button("Find Matching Processes")
             
             if submitted:
-                if not employee_name or not employee_email:
+                if not st.session_state.temp_employee_name or not st.session_state.temp_employee_email:
                     st.error("Please enter both employee name and email")
                 else:
-                    # Get suggested processes sorted by vacancy (high to low)
-                    matching_processes = db.get_process_suggestions(potential, communication)
+                    st.session_state.show_process_list = True
+        
+        # Show process list outside of form (so buttons will work)
+        if st.session_state.show_process_list:
+            employee_name = st.session_state.temp_employee_name
+            employee_email = st.session_state.temp_employee_email
+            potential = st.session_state.temp_potential
+            communication = st.session_state.temp_communication
+            
+            # Get suggested processes sorted by vacancy (high to low)
+            matching_processes = db.get_process_suggestions(potential, communication)
+            
+            if not matching_processes.empty:
+                st.success(f"Found {len(matching_processes)} matching processes for {employee_name}!")
+                
+                # Display all matching processes
+                st.subheader("Available Matching Processes (Sorted by Vacancy)")
+                st.dataframe(matching_processes, use_container_width=True)
+                
+                # Display processes with an 'Add' button for each process
+                st.subheader("Available Matching Processes (Select one to assign)")
+                
+                # Create a DataFrame with an additional "Action" column
+                # We'll use this custom dataframe view with buttons
+                processes_with_actions = matching_processes.copy()
+                
+                # Display the processes
+                for i, row in processes_with_actions.iterrows():
+                    process_name = row['Process_Name']
+                    vacancy = row['Vacancy']
+                    potential_val = row['Potential']
+                    comm_val = row['Communication']
                     
-                    if not matching_processes.empty:
-                        st.success(f"Found {len(matching_processes)} matching processes for {employee_name}!")
-                        
-                        # Display all matching processes
-                        st.subheader("Available Matching Processes (Sorted by Vacancy)")
-                        st.dataframe(matching_processes, use_container_width=True)
-                        
-                        # Display processes with an 'Add' button for each process
-                        st.subheader("Available Matching Processes (Select one to assign)")
-                        
-                        # Create a DataFrame with an additional "Action" column
-                        # We'll use this custom dataframe view with buttons
-                        processes_with_actions = matching_processes.copy()
-                        
-                        # Display the processes
-                        for i, row in processes_with_actions.iterrows():
-                            process_name = row['Process_Name']
-                            vacancy = row['Vacancy']
-                            potential_val = row['Potential']
-                            comm_val = row['Communication']
-                            
-                            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                            
-                            with col1:
-                                st.write(f"**{process_name}**")
-                            with col2:
-                                st.write(f"Potential: {potential_val}")
-                            with col3:
-                                st.write(f"Communication: {comm_val}")
-                            with col4:
-                                if st.button(f"Add to {process_name}", key=f"add_{i}"):
-                                    # Add employee to the database with selected process
-                                    success, message = db.add_employee(
-                                        employee_name, 
-                                        employee_email,
-                                        potential, 
-                                        communication, 
-                                        process_name
-                                    )
-                                    
-                                    if success:
-                                        # Update vacancy in session state
-                                        process_idx = st.session_state.process_data[
-                                            st.session_state.process_data['Process_Name'] == process_name
-                                        ].index[0]
-                                        
-                                        st.session_state.process_data.at[process_idx, 'Vacancy'] -= 1
-                                        
-                                        # Update database
-                                        db.update_process_vacancy(process_name, -1)
-                                        
-                                        st.success(f"Successfully assigned {employee_name} to {process_name}!")
-                                        st.rerun()
-                                    else:
-                                        st.error(message)
-                            
-                            st.divider()
-                    else:
-                        st.error("No matching processes found with available vacancies")
-                        
-                        # Option to add employee without process assignment
-                        if st.button("Add Employee Without Assignment"):
+                    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                    
+                    with col1:
+                        st.write(f"**{process_name}** (Vacancy: {vacancy})")
+                    with col2:
+                        st.write(f"Potential: {potential_val}")
+                    with col3:
+                        st.write(f"Communication: {comm_val}")
+                    with col4:
+                        if st.button(f"Add to {process_name}", key=f"add_{i}"):
+                            # Add employee to the database with selected process
                             success, message = db.add_employee(
                                 employee_name, 
                                 employee_email,
                                 potential, 
-                                communication
+                                communication, 
+                                process_name
                             )
                             
                             if success:
-                                st.success("Employee added without process assignment")
+                                # Update vacancy in session state
+                                process_idx = st.session_state.process_data[
+                                    st.session_state.process_data['Process_Name'] == process_name
+                                ].index[0]
+                                
+                                st.session_state.process_data.at[process_idx, 'Vacancy'] -= 1
+                                
+                                # Update database
+                                db.update_process_vacancy(process_name, -1)
+                                
+                                st.success(f"Successfully assigned {employee_name} to {process_name}!")
+                                st.session_state.show_process_list = False
                                 st.rerun()
                             else:
                                 st.error(message)
+                    
+                    st.divider()
+            else:
+                st.error("No matching processes found with available vacancies")
+                
+                # Option to add employee without process assignment
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.warning("No matching processes available with vacancies")
+                with col2:
+                    if st.button("Add Without Assignment"):
+                        success, message = db.add_employee(
+                            employee_name, 
+                            employee_email,
+                            potential, 
+                            communication
+                        )
+                        
+                        if success:
+                            st.success("Employee added without process assignment")
+                            st.session_state.show_process_list = False
+                            st.rerun()
+                        else:
+                            st.error(message)
         
         # Button to close the form
         if st.button("Close Add Form"):
