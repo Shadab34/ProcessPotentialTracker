@@ -7,8 +7,9 @@ from io import BytesIO
 import os
 import sys
 
-# Set environment variables for Streamlit Cloud
-os.environ['IS_STREAMLIT_CLOUD'] = 'true'
+# IMPORTANT: For local development, force file-based database
+# This prevents SQLite thread issues with in-memory databases
+os.environ['IS_STREAMLIT_CLOUD'] = 'false'
 
 # Print environment variables for debugging
 print("Environment variables:")

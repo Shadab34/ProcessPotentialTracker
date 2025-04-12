@@ -3,6 +3,7 @@ import pandas as pd
 import os
 from datetime import datetime
 import streamlit as st
+import threading
 
 # Check if we're running in the cloud
 is_cloud = os.environ.get('IS_STREAMLIT_CLOUD') == 'true'
@@ -10,34 +11,25 @@ is_cloud = os.environ.get('IS_STREAMLIT_CLOUD') == 'true'
 # Database file path
 DB_PATH = ':memory:' if is_cloud else 'employee_process_matcher.db'
 
-# Store a single connection for in-memory database to keep tables alive
-_conn = None
+# Thread-local storage for connections
+local = threading.local()
 
 def get_connection():
-    """Get a database connection"""
-    global _conn
-    
-    # For in-memory database, we need to use a single connection to keep tables alive
-    if DB_PATH == ':memory:':
-        if _conn is None:
-            _conn = sqlite3.connect(DB_PATH)
-            print("Created new persistent in-memory database connection")
-        return _conn
-    else:
-        # For file-based database, create a new connection each time
+    """Get a database connection that's safe for the current thread"""
+    # For file-based database, create a new connection each time
+    if DB_PATH != ':memory:':
         return sqlite3.connect(DB_PATH)
+        
+    # For in-memory database, use thread-local storage
+    if not hasattr(local, 'conn'):
+        local.conn = sqlite3.connect(DB_PATH)
+        print(f"Created new in-memory connection in thread {threading.get_ident()}")
+        # Initialize the database schema in this thread
+        init_schema(local.conn)
+    return local.conn
 
-def init_db():
-    """Initialize the database with required tables if they don't exist."""
-    # Only remove existing database in local mode
-    if not is_cloud and os.path.exists(DB_PATH):
-        try:
-            os.remove(DB_PATH)
-        except:
-            print(f"Could not remove existing database at {DB_PATH}")
-    
-    # Get a connection that persists for in-memory databases
-    conn = get_connection()
+def init_schema(conn):
+    """Initialize the database schema only (no data)"""
     cursor = conn.cursor()
     
     # Create process table
@@ -66,6 +58,33 @@ def init_db():
         FOREIGN KEY (process_id) REFERENCES processes (id)
     )
     ''')
+    conn.commit()
+
+def init_db():
+    """Initialize the database with required tables if they don't exist."""
+    # Only remove existing database in local mode
+    if not is_cloud and os.path.exists(DB_PATH):
+        try:
+            os.remove(DB_PATH)
+        except:
+            print(f"Could not remove existing database at {DB_PATH}")
+    
+    # Get a connection for the current thread
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Check if we need to add sample data
+    try:
+        cursor.execute("SELECT COUNT(*) FROM processes")
+        count = cursor.fetchone()[0]
+        
+        # If we already have data, no need to add sample data
+        if count > 0:
+            return
+            
+    except sqlite3.OperationalError:
+        # Table doesn't exist, ensure schema is initialized
+        init_schema(conn)
     
     # Clear existing data in memory database
     if is_cloud and DB_PATH == ':memory:':
@@ -97,7 +116,7 @@ def init_db():
     if DB_PATH != ':memory:':
         conn.close()
     
-    print(f"Database initialized at {DB_PATH} (cloud mode: {is_cloud})")
+    print(f"Database initialized at {DB_PATH} (cloud mode: {is_cloud}, thread: {threading.get_ident()})")
 
 def save_processes_to_db(process_data):
     """
