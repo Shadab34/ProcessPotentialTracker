@@ -7,6 +7,15 @@ from io import BytesIO
 import os
 import sys
 
+# Set environment variables for Streamlit Cloud
+os.environ['IS_STREAMLIT_CLOUD'] = 'true'
+
+# Print environment variables for debugging
+print("Environment variables:")
+for key, value in os.environ.items():
+    if key.startswith('STREAMLIT') or key == 'PORT' or key == 'IS_STREAMLIT_CLOUD':
+        print(f"  {key}={value}")
+
 from data_handler import load_data, save_data
 from matching_engine import find_matching_process
 from visualization import create_vacancy_chart, create_process_distribution
