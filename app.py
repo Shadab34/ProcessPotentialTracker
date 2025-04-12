@@ -21,14 +21,8 @@ from matching_engine import find_matching_process
 from visualization import create_vacancy_chart, create_process_distribution
 import database as db
 
-# Check if running in Streamlit Cloud
-is_cloud = 'STREAMLIT_SHARING' in os.environ or 'STREAMLIT_SERVER_PORT' in os.environ
-if is_cloud:
-    # Force cloud mode
-    os.environ['IS_STREAMLIT_CLOUD'] = 'true'
-    print("Running in Streamlit Cloud mode - using in-memory database")
-else:
-    print("Running in local mode - using file-based database")
+# Initialize the database before doing anything else
+db.init_db()
 
 # Set page config
 st.set_page_config(
@@ -40,7 +34,11 @@ st.set_page_config(
 # Initialize session state variables
 if 'process_data' not in st.session_state:
     # Try to load from database first
-    st.session_state.process_data = db.load_processes_from_db()
+    process_data = db.load_processes_from_db()
+    if process_data is not None:
+        st.session_state.process_data = process_data
+    else:
+        st.session_state.process_data = None
     
 if 'show_add_employee' not in st.session_state:
     st.session_state.show_add_employee = False

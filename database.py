@@ -10,9 +10,22 @@ is_cloud = os.environ.get('IS_STREAMLIT_CLOUD') == 'true'
 # Database file path
 DB_PATH = ':memory:' if is_cloud else 'employee_process_matcher.db'
 
+# Store a single connection for in-memory database to keep tables alive
+_conn = None
+
 def get_connection():
     """Get a database connection"""
-    return sqlite3.connect(DB_PATH)
+    global _conn
+    
+    # For in-memory database, we need to use a single connection to keep tables alive
+    if DB_PATH == ':memory:':
+        if _conn is None:
+            _conn = sqlite3.connect(DB_PATH)
+            print("Created new persistent in-memory database connection")
+        return _conn
+    else:
+        # For file-based database, create a new connection each time
+        return sqlite3.connect(DB_PATH)
 
 def init_db():
     """Initialize the database with required tables if they don't exist."""
@@ -22,7 +35,8 @@ def init_db():
             os.remove(DB_PATH)
         except:
             print(f"Could not remove existing database at {DB_PATH}")
-        
+    
+    # Get a connection that persists for in-memory databases
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -53,8 +67,10 @@ def init_db():
     )
     ''')
     
-    # If in cloud mode, add sample data
+    # Clear existing data in memory database
     if is_cloud and DB_PATH == ':memory:':
+        cursor.execute("DELETE FROM processes")
+        
         # Sample process data
         sample_processes = [
             ('Sales Support', 'Sales', 'Good', 5),
@@ -76,7 +92,10 @@ def init_db():
             )
     
     conn.commit()
-    conn.close()
+    
+    # Only close file-based connections
+    if DB_PATH != ':memory:':
+        conn.close()
     
     print(f"Database initialized at {DB_PATH} (cloud mode: {is_cloud})")
 
@@ -100,7 +119,10 @@ def save_processes_to_db(process_data):
         )
     
     conn.commit()
-    conn.close()
+    
+    # Only close file-based connections
+    if DB_PATH != ':memory:':
+        conn.close()
 
 def load_processes_from_db():
     """
@@ -117,31 +139,43 @@ def load_processes_from_db():
     
     # Check if we have any processes
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM processes")
-    count = cursor.fetchone()[0]
     
-    if count == 0:
-        conn.close()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM processes")
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            if DB_PATH != ':memory:':
+                conn.close()
+            return None
+        
+        # Load processes into DataFrame - use explicit ORDER BY for consistent results
+        df = pd.read_sql("""
+            SELECT 
+                process_name as Process_Name, 
+                potential as Potential, 
+                communication as Communication, 
+                vacancy as Vacancy 
+            FROM processes
+            ORDER BY vacancy DESC, process_name ASC
+        """, conn)
+        
+        # Debug info for tracking
+        print(f"Loaded {len(df)} processes from database")
+        if not df.empty:
+            print(df[['Process_Name', 'Vacancy']].head(5).to_string())
+        
+        # Only close file-based connections
+        if DB_PATH != ':memory:':
+            conn.close()
+            
+        return df
+    except Exception as e:
+        print(f"Error loading processes: {str(e)}")
+        # Only close file-based connections on error
+        if DB_PATH != ':memory:':
+            conn.close()
         return None
-    
-    # Load processes into DataFrame - use explicit ORDER BY for consistent results
-    df = pd.read_sql("""
-        SELECT 
-            process_name as Process_Name, 
-            potential as Potential, 
-            communication as Communication, 
-            vacancy as Vacancy 
-        FROM processes
-        ORDER BY vacancy DESC, process_name ASC
-    """, conn)
-    
-    # Debug info for tracking
-    print(f"Loaded {len(df)} processes from database")
-    if not df.empty:
-        print(df[['Process_Name', 'Vacancy']].head(5).to_string())
-    
-    conn.close()
-    return df
 
 def update_process_vacancy(process_name, change):
     """
@@ -647,7 +681,7 @@ def delete_employee(employee_id):
 
 def purge_deleted_emails():
     """Force cleanup of database to remove any lingering deleted emails"""
-    # For cloud deployment, we'll skip complex operations that might fail
+    # For cloud deployment, we'll skip all operations
     if is_cloud:
         return
         
@@ -656,7 +690,8 @@ def purge_deleted_emails():
         if DB_PATH == ':memory:':
             return
             
-        conn = get_connection()
+        # Use a new connection for file database vacuum
+        conn = sqlite3.connect(DB_PATH)
         conn.execute("VACUUM")
         conn.commit()
         conn.close()
@@ -664,7 +699,8 @@ def purge_deleted_emails():
         print("Database purge completed successfully")
     except Exception as e:
         print(f"Error during database purge: {str(e)}")
-    
+        # Don't attempt any further operations on error
+
 def reset_database():
     """Hard reset of the database - for emergency use"""
     import os
