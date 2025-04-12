@@ -40,11 +40,26 @@ if 'show_reset_db' not in st.session_state:
 if 'refresh_counter' not in st.session_state:
     st.session_state.refresh_counter = 0
     
+if 'success_message' not in st.session_state:
+    st.session_state.success_message = ""
+
 # Function to force refresh data from database
 def refresh_data():
+    """Force a complete refresh of data from the database"""
+    # Clean the database first
+    db.purge_deleted_emails()
+    
+    # Clear and reload process data
+    st.session_state.process_data = None
     st.session_state.process_data = db.load_processes_from_db()
+    
     # Increment refresh counter to trigger reactive reloads
-    st.session_state.refresh_counter += 1
+    st.session_state.refresh_counter += 2
+    
+    # Clear any stale success messages
+    st.session_state.success_message = ""
+    
+    print("Data refreshed from database!")
 
 # Title and description
 st.title("Employee-Process Matcher")
@@ -128,20 +143,33 @@ if st.session_state.process_data is None:
             st.error(f"Error loading sample data: {str(e)}")
     
 else:
-    # Always reload fresh data to ensure we have the latest vacancy counts
-    # This ensures the main UI always shows current data
-    refresh_data()
+    # CRITICAL: Always reload fresh data to ensure we have the latest vacancy counts
+    # We're forcing a complete reload from the database every time
+    st.session_state.process_data = db.load_processes_from_db()
+    st.session_state.refresh_counter += 1
     
-    # Display process data
+    # Display any stored success messages
+    if 'success_message' in st.session_state and st.session_state.success_message:
+        st.success(st.session_state.success_message)
+        # Clear the message after displaying it
+        st.session_state.success_message = ""
+        # Force a reload of the page to ensure fresh data
+        if st.session_state.success_message and ('added' in st.session_state.success_message.lower() or 'deleted' in st.session_state.success_message.lower() or 'updated' in st.session_state.success_message.lower()):
+            st.session_state.refresh_counter += 1
+            st.rerun()
+    
+    # Display process data with real-time vacancy counts
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.subheader("Process Data")
         
         # Add a refresh button to force UI updates
-        if st.button("↻ Refresh Data"):
+        if st.button("↻ Refresh Data", key=f"refresh_button_{st.session_state.refresh_counter}"):
+            # Complete forced reload from database
             refresh_data()
-            st.success("Data refreshed!")
+            st.success("Data refreshed from database!")
+            st.rerun()
         
         # Filter controls
         filter_col1, filter_col2 = st.columns(2)
@@ -169,18 +197,18 @@ else:
             filtered_data = filtered_data[filtered_data['Communication'].isin(communication_filter)]
         
         # Display filtered data - add key based on refresh counter to force updates
-        st.dataframe(filtered_data, use_container_width=True, key=f"process_data_{st.session_state.refresh_counter}")
+        st.dataframe(filtered_data, use_container_width=True)
     
     with col2:
         st.subheader("Vacancy Overview")
         
         # Create a vacancy chart - add key based on refresh counter to force updates
         fig = create_vacancy_chart(st.session_state.process_data)
-        st.plotly_chart(fig, use_container_width=True, key=f"vacancy_chart_{st.session_state.refresh_counter}")
+        st.plotly_chart(fig, use_container_width=True)
         
         # Create a potential distribution chart
         fig2 = create_process_distribution(st.session_state.process_data)
-        st.plotly_chart(fig2, use_container_width=True, key=f"distribution_chart_{st.session_state.refresh_counter}")
+        st.plotly_chart(fig2, use_container_width=True)
     
     # Add sidebar button for find employee
     if st.session_state.process_data is not None:
@@ -293,12 +321,18 @@ else:
                             )
                             
                             if success:
-                                # Reload the process data from database to ensure it's up to date
-                                # (vacancy is already updated in the add_employee function)
-                                st.session_state.process_data = db.load_processes_from_db()
+                                # Reload process data to reflect updated vacancies
+                                # Force full reload to prevent caching issues
+                                db.purge_deleted_emails()  # Clean database
+                                st.session_state.process_data = None  # Clear cache
+                                st.session_state.process_data = db.load_processes_from_db()  # Load fresh
+                                st.session_state.refresh_counter += 2  # Force UI update
                                 
-                                st.success(f"Successfully assigned {employee_name} to {process_name}!")
-                                st.session_state.show_process_list = False
+                                # Store success message in session state for display after rerun
+                                st.session_state.success_message = message
+                                st.session_state.employee_to_edit = None
+                                
+                                # Force rerun to update all UI elements
                                 st.rerun()
                             else:
                                 st.error(message)
@@ -373,10 +407,22 @@ else:
                                 success, message = db.delete_employee(employee['id'])
                                 if success:
                                     # Reload process data to reflect updated vacancies
-                                    st.session_state.process_data = db.load_processes_from_db()
+                                    # Force full reload to prevent caching issues
+                                    db.purge_deleted_emails()  # Clean database
+                                    st.session_state.process_data = None  # Clear cache
+                                    st.session_state.process_data = db.load_processes_from_db()  # Load fresh
+                                    st.session_state.refresh_counter += 2  # Force UI update
                                     
-                                    st.success(message)
-                                    st.rerun()
+                                    # Double-check deletion was successful
+                                    check_employee = db.find_employee_by_email(employee['email'])
+                                    if check_employee:
+                                        st.error(f"Error: Employee with email {employee['email']} still found in database!")
+                                    else:
+                                        # Store success message in session state for display after rerun
+                                        st.session_state.success_message = message
+                                        
+                                        # Force rerun to update all UI elements
+                                        st.rerun()
                                 else:
                                     st.error(message)
                 else:
@@ -447,10 +493,17 @@ else:
                     
                     if success:
                         # Reload the process data to reflect any vacancy changes
-                        st.session_state.process_data = db.load_processes_from_db()
+                        # Force full reload to prevent caching issues
+                        db.purge_deleted_emails()  # Clean database
+                        st.session_state.process_data = None  # Clear cache
+                        st.session_state.process_data = db.load_processes_from_db()  # Load fresh
+                        st.session_state.refresh_counter += 2  # Force UI update
                         
-                        st.success(message)
+                        # Store success message in session state for display after rerun
+                        st.session_state.success_message = message
                         st.session_state.employee_to_edit = None
+                        
+                        # Force rerun to update all UI elements
                         st.rerun()
                     else:
                         st.error(message)

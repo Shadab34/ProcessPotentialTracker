@@ -74,7 +74,11 @@ def load_processes_from_db():
     Returns:
         DataFrame: Processes data or None if database is empty
     """
-    conn = sqlite3.connect(DB_PATH)
+    # Ensure we have a clean connection
+    conn = sqlite3.connect(DB_PATH, isolation_level=None)
+    conn.execute("PRAGMA journal_mode = WAL")  # Use WAL mode for better concurrency
+    conn.execute("PRAGMA synchronous = NORMAL")  # Balance durability and speed
+    conn.execute("PRAGMA cache_size = -64000")  # Use a 64MB cache
     
     # Check if we have any processes
     cursor = conn.cursor()
@@ -85,9 +89,20 @@ def load_processes_from_db():
         conn.close()
         return None
     
-    # Load processes into DataFrame
-    df = pd.read_sql("SELECT process_name as Process_Name, potential as Potential, "
-                     "communication as Communication, vacancy as Vacancy FROM processes", conn)
+    # Load processes into DataFrame - use explicit ORDER BY for consistent results
+    df = pd.read_sql("""
+        SELECT 
+            process_name as Process_Name, 
+            potential as Potential, 
+            communication as Communication, 
+            vacancy as Vacancy 
+        FROM processes
+        ORDER BY vacancy DESC, process_name ASC
+    """, conn)
+    
+    # Debug info for tracking
+    print(f"Loaded {len(df)} processes from database")
+    print(df[['Process_Name', 'Vacancy']].head(5).to_string())
     
     conn.close()
     return df
@@ -204,28 +219,33 @@ def add_employee(name, email, potential, communication, process_name=None):
                 conn.close()
                 return False, f"No vacancy available in {process_name}"
             
-            # Update vacancy count atomically using direct SQL
-            # This ensures the vacancy is updated reliably
+            # Update vacancy count - decrement by 1
             cursor.execute("""
                 UPDATE processes 
-                SET vacancy = CASE
-                    WHEN vacancy > 0 THEN vacancy - 1
-                    ELSE 0
-                END
-                WHERE process_name = ?
+                SET vacancy = vacancy - 1
+                WHERE process_name = ? AND vacancy > 0
             """, (process_name,))
             
-            # Verify the update worked
+            # Check if update was successful
             if cursor.rowcount == 0:
                 cursor.execute("ROLLBACK")
                 conn.close()
                 return False, f"Failed to update vacancy for {process_name}"
+            
+            # Verify the new vacancy count
+            cursor.execute("SELECT vacancy FROM processes WHERE process_name = ?", (process_name,))
+            new_vacancy = cursor.fetchone()[0]
+            print(f"Updated vacancy for {process_name} from {current_vacancy} to {new_vacancy}")
         
         # Add employee
         cursor.execute(
             "INSERT INTO employees (name, email, potential, communication, process_id, process_name) VALUES (?, ?, ?, ?, ?, ?)",
             (name, email, potential, communication, process_id, process_name)
         )
+        
+        # Get the new employee ID
+        employee_id = cursor.lastrowid
+        print(f"Added employee {name} with ID {employee_id} to process {process_name}")
         
         # Everything worked, commit the transaction
         cursor.execute("COMMIT")
@@ -244,6 +264,7 @@ def add_employee(name, email, potential, communication, process_name=None):
             pass
         
         conn.close()
+        print(f"Error adding employee: {str(e)}")
         return False, f"Database error: {str(e)}"
 
 def get_employee_assignments():
@@ -302,20 +323,40 @@ def find_employee_by_email(email):
     Returns:
         dict: Employee data if found, None otherwise
     """
+    # First run a purge to ensure we have no deleted records
+    purge_deleted_emails()
+    
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
     # Normalize email for case-insensitive search
     email = email.strip().lower()
     
+    # Use COUNT first to check if the employee exists at all
+    cursor.execute("SELECT COUNT(*) FROM employees WHERE LOWER(email) = LOWER(?)", (email,))
+    count = cursor.fetchone()[0]
+    
+    if count == 0:
+        conn.close()
+        return None
+    
+    # If employee exists, get all details
     cursor.execute("""
         SELECT e.id, e.name, e.email, e.potential, e.communication, 
                e.process_id, e.process_name
         FROM employees e
         WHERE LOWER(e.email) = LOWER(?)
+        LIMIT 1
     """, (email,))
     
     result = cursor.fetchone()
+    
+    # Print debug info
+    if result:
+        print(f"Found employee: ID={result[0]}, Name={result[1]}, Email={result[2]}")
+    else:
+        print(f"No employee found with email: {email}")
+    
     conn.close()
     
     if result:
@@ -375,6 +416,7 @@ def update_employee(employee_id, name, email, potential, communication, process_
             return False, "Employee not found"
             
         old_process = result[0]
+        print(f"Updating employee {employee_id} from process '{old_process}' to '{process_name}'")
         
         # Update process vacancy counts if assignment changed
         if old_process != process_name:
@@ -386,9 +428,11 @@ def update_employee(employee_id, name, email, potential, communication, process_
                     WHERE process_name = ?
                 """, (old_process,))
                 
-                if cursor.rowcount == 0:
-                    # Old process not found, but continue anyway
-                    pass
+                # Get the updated vacancy for old process
+                cursor.execute("SELECT vacancy FROM processes WHERE process_name = ?", (old_process,))
+                old_vacancy = cursor.fetchone()
+                if old_vacancy:
+                    print(f"Increased vacancy for {old_process} to {old_vacancy[0]}")
             
             # Get process ID and check vacancy for the new process
             process_id = None
@@ -409,20 +453,23 @@ def update_employee(employee_id, name, email, potential, communication, process_
                     conn.close()
                     return False, f"No vacancy available in {process_name}"
                 
-                # Decrease vacancy for new process - use the safer atomic SQL approach
+                # Decrease vacancy for new process - simpler approach
                 cursor.execute("""
                     UPDATE processes 
-                    SET vacancy = CASE
-                        WHEN vacancy > 0 THEN vacancy - 1
-                        ELSE 0
-                    END
-                    WHERE process_name = ?
+                    SET vacancy = vacancy - 1
+                    WHERE process_name = ? AND vacancy > 0
                 """, (process_name,))
                 
                 if cursor.rowcount == 0:
                     cursor.execute("ROLLBACK")
                     conn.close()
                     return False, f"Failed to update vacancy for {process_name}"
+                
+                # Get the updated vacancy for new process
+                cursor.execute("SELECT vacancy FROM processes WHERE process_name = ?", (process_name,))
+                new_vacancy = cursor.fetchone()
+                if new_vacancy:
+                    print(f"Decreased vacancy for {process_name} to {new_vacancy[0]}")
         else:
             # No change in process assignment
             # Get process ID for the current process
@@ -464,6 +511,7 @@ def update_employee(employee_id, name, email, potential, communication, process_
             pass
             
         conn.close()
+        print(f"Error updating employee: {str(e)}")
         return False, f"Database error: {str(e)}"
 
 def delete_employee(employee_id):
@@ -496,6 +544,8 @@ def delete_employee(employee_id):
         process_name = result[0]
         email = result[1]
         
+        print(f"Deleting employee with ID {employee_id}, email {email}, process {process_name}")
+        
         # Delete the employee
         cursor.execute("DELETE FROM employees WHERE id = ?", (employee_id,))
         
@@ -505,22 +555,45 @@ def delete_employee(employee_id):
             conn.close()
             return False, "Employee could not be deleted"
         
+        # Double-check deletion
+        cursor.execute("SELECT COUNT(*) FROM employees WHERE id = ?", (employee_id,))
+        if cursor.fetchone()[0] > 0:
+            print(f"ERROR: Employee {employee_id} still exists after deletion!")
+            cursor.execute("ROLLBACK")
+            conn.close() 
+            return False, "Failed to completely delete employee"
+            
+        # Also ensure no record with this email exists
+        cursor.execute("SELECT COUNT(*) FROM employees WHERE LOWER(email) = LOWER(?)", (email,))
+        if cursor.fetchone()[0] > 0:
+            print(f"ERROR: Employee with email {email} still exists after deletion!")
+            cursor.execute("DELETE FROM employees WHERE LOWER(email) = LOWER(?)", (email,))
+            
         # Update process vacancy if employee was assigned
         if process_name:
+            # Directly increment the vacancy 
             cursor.execute("""
                 UPDATE processes 
                 SET vacancy = vacancy + 1 
                 WHERE process_name = ?
             """, (process_name,))
             
-            # We don't check rowcount here since the process might have been deleted
-            # But we still want to delete the employee
+            # Log the update for troubleshooting
+            cursor.execute("SELECT vacancy FROM processes WHERE process_name = ?", (process_name,))
+            new_vacancy = cursor.fetchone()
+            if new_vacancy:
+                print(f"Updated vacancy for {process_name} to {new_vacancy[0]}")
+            else:
+                print(f"Warning: Process {process_name} not found when updating vacancy")
         
         # All operations successful, commit the transaction
         cursor.execute("COMMIT")
+        
+        # Ensure all changes are written to disk
+        conn.commit()
         conn.close()
         
-        # Force database cleaning to remove the deleted employee email
+        # Force database cleaning
         purge_deleted_emails()
         
         return True, f"Employee deleted and process '{process_name or 'None'}' vacancy updated"
@@ -533,16 +606,44 @@ def delete_employee(employee_id):
             pass
             
         conn.close()
-        return False, f"Database error: {str(e)}"
+        print(f"Error deleting employee: {str(e)}")
+        return False, f"Error: {str(e)}"
 
 def purge_deleted_emails():
     """Force cleanup of database to remove any lingering deleted emails"""
-    # This function will force SQLite to vacuum the database
-    # which should help with the issue of deleted emails still being detected
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("VACUUM")
-    conn.commit()
-    conn.close()
+    # Enhanced version to ensure all deleted records are truly gone
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        
+        # First, ensure we have no orphaned records
+        conn.execute("PRAGMA foreign_keys = ON")
+        
+        # Perform integrity check
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA integrity_check")
+        integrity_result = cursor.fetchone()[0]
+        if integrity_result != "ok":
+            print(f"WARNING: Database integrity check failed with: {integrity_result}")
+            
+        # Run VACUUM to reclaim space and rebuild the database
+        conn.execute("VACUUM")
+        
+        # Analyze the database to update statistics
+        conn.execute("ANALYZE")
+        
+        # Explicitly check for any deleted IDs that might still exist
+        cursor.execute("SELECT id FROM sqlite_sequence WHERE name = 'employees'")
+        result = cursor.fetchone()
+        if result:
+            last_id = result[0]
+            print(f"Last employee ID: {last_id}")
+        
+        conn.commit()
+        conn.close()
+        
+        print("Database purge completed successfully")
+    except Exception as e:
+        print(f"Error during database purge: {str(e)}")
     
 def reset_database():
     """Hard reset of the database - for emergency use"""

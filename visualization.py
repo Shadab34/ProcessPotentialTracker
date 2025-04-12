@@ -23,8 +23,10 @@ def create_vacancy_chart(process_data):
         x='Vacancy',
         color='Vacancy',
         orientation='h',
-        color_continuous_scale='Viridis',
-        title='Process Vacancies'
+        color_continuous_scale='plasma',
+        title='Process Vacancies',
+        text='Vacancy',
+        hover_data={'Process_Name': True, 'Vacancy': True, 'Potential': True, 'Communication': True}
     )
     
     # Update layout
@@ -32,7 +34,19 @@ def create_vacancy_chart(process_data):
         xaxis_title='Available Vacancies',
         yaxis_title='Process Name',
         height=min(400, 100 + len(process_data) * 30),  # Adjust height based on number of processes
-        margin=dict(l=10, r=10, t=40, b=10)
+        margin=dict(l=10, r=10, t=40, b=10),
+        coloraxis_colorbar=dict(title="Vacancies"),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)'
+    )
+    
+    # Make the text more readable and bars more vibrant
+    fig.update_traces(
+        textposition='outside', 
+        textfont_size=10,
+        marker_line_width=1,
+        marker_line_color='rgba(0,0,0,0.3)',
+        opacity=0.9
     )
     
     return fig
@@ -48,21 +62,41 @@ def create_process_distribution(process_data):
         Figure: Plotly figure object
     """
     # Group by potential type and count
-    potential_counts = process_data.groupby('Potential').size().reset_index(name='count')
+    # We need to count unique processes, not just rows
+    potential_counts = process_data.groupby('Potential')['Process_Name'].nunique().reset_index(name='count')
     
-    # Create pie chart
+    # Calculate percentages for display
+    total = potential_counts['count'].sum()
+    potential_counts['percentage'] = (potential_counts['count'] / total * 100).round(1)
+    potential_counts['label'] = potential_counts['Potential'] + ' (' + potential_counts['percentage'].astype(str) + '%)'
+    
+    # Create pie chart with custom colors
+    colors = px.colors.qualitative.Bold  # Using a more vibrant color palette
+    
     fig = px.pie(
         potential_counts,
         values='count',
-        names='Potential',
+        names='label',  # Use the formatted labels with percentages
         title='Processes by Potential Type',
-        color_discrete_sequence=px.colors.qualitative.Set3
+        color_discrete_sequence=colors
     )
     
-    # Update layout
+    # Update layout and text
     fig.update_layout(
         margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)'
+    )
+    
+    # Update text inside pie chart
+    fig.update_traces(
+        textinfo='percent+label',
+        textposition='inside',
+        textfont=dict(size=12, color='white'),
+        marker=dict(line=dict(color='#000000', width=1)),
+        pull=[0.05] * len(potential_counts),  # Slight pull for better visualization
+        hoverinfo='label+percent+value'
     )
     
     return fig
