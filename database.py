@@ -109,6 +109,9 @@ def load_processes_from_db():
     Returns:
         DataFrame: Processes data or None if database is empty
     """
+    # Ensure database is initialized
+    init_db()  # Make sure tables exist
+    
     # Ensure we have a clean connection
     conn = get_connection()
     
