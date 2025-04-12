@@ -5,28 +5,38 @@ from datetime import datetime
 import streamlit as st
 import threading
 
-# Check if we're running in the cloud
-is_cloud = os.environ.get('IS_STREAMLIT_CLOUD') == 'true'
+# Check if we're running in the cloud - detect standard cloud environment variables
+is_streamlit_cloud = os.environ.get('IS_STREAMLIT_CLOUD') == 'true'
+is_cloud_platform = any(key in os.environ for key in ['STREAMLIT_SHARING', 'STREAMLIT_SERVER_PORT', 'PORT', 'DYNO'])
+is_cloud = is_streamlit_cloud or is_cloud_platform
 
 # Database file path
-DB_PATH = ':memory:' if is_cloud else 'employee_process_matcher.db'
+# For cloud deployments, use a file path that's within the app's writable directory
+if is_cloud:
+    DB_PATH = './streamlit_data.db'  # Use a file-based DB even in cloud for persistence
+else:
+    DB_PATH = 'employee_process_matcher.db'
+
+print(f"Database configuration: Path={DB_PATH}, Cloud mode={is_cloud}")
 
 # Thread-local storage for connections
 local = threading.local()
 
 def get_connection():
     """Get a database connection that's safe for the current thread"""
-    # For file-based database, create a new connection each time
-    if DB_PATH != ':memory:':
-        return sqlite3.connect(DB_PATH)
-        
-    # For in-memory database, use thread-local storage
-    if not hasattr(local, 'conn'):
-        local.conn = sqlite3.connect(DB_PATH)
-        print(f"Created new in-memory connection in thread {threading.get_ident()}")
-        # Initialize the database schema in this thread
-        init_schema(local.conn)
-    return local.conn
+    try:
+        # Always create a new connection for better thread safety
+        conn = sqlite3.connect(DB_PATH)
+        # Enable foreign keys
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+    except Exception as e:
+        print(f"Error connecting to database: {str(e)}")
+        # If we can't connect to the file database, use in-memory as fallback
+        conn = sqlite3.connect(':memory:')
+        # Initialize schema immediately for in-memory database
+        init_schema(conn)
+        return conn
 
 def init_schema(conn):
     """Initialize the database schema only (no data)"""
@@ -62,35 +72,39 @@ def init_schema(conn):
 
 def init_db():
     """Initialize the database with required tables if they don't exist."""
-    # Only remove existing database in local mode
-    if not is_cloud and os.path.exists(DB_PATH):
-        try:
-            os.remove(DB_PATH)
-        except:
-            print(f"Could not remove existing database at {DB_PATH}")
-    
-    # Get a connection for the current thread
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    # Check if we need to add sample data
     try:
-        cursor.execute("SELECT COUNT(*) FROM processes")
-        count = cursor.fetchone()[0]
+        # Only recreate the database in development mode and if the file exists
+        if not is_cloud and os.path.exists(DB_PATH) and os.access(DB_PATH, os.W_OK):
+            try:
+                os.remove(DB_PATH)
+                print(f"Removed existing development database at {DB_PATH}")
+            except Exception as e:
+                print(f"Could not remove existing database at {DB_PATH}: {str(e)}")
         
-        # If we already have data, no need to add sample data
-        if count > 0:
-            return
-            
-    except sqlite3.OperationalError:
-        # Table doesn't exist, ensure schema is initialized
+        # Get a connection for the current thread
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Always ensure the schema exists
         init_schema(conn)
-    
-    # Clear existing data in memory database
-    if is_cloud and DB_PATH == ':memory:':
-        cursor.execute("DELETE FROM processes")
         
-        # Sample process data
+        # Check if we need to add sample data
+        try:
+            cursor.execute("SELECT COUNT(*) FROM processes")
+            count = cursor.fetchone()[0]
+            
+            # If we already have data, no need to add sample data
+            if count > 0:
+                print(f"Database already contains {count} processes")
+                conn.close()
+                return
+                
+        except sqlite3.OperationalError:
+            # Table might not exist yet, schema will be initialized above
+            pass
+        
+        # Add sample data
+        print("Adding sample data to database")
         sample_processes = [
             ('Sales Support', 'Sales', 'Good', 5),
             ('Customer Service', 'Service', 'Very Good', 3),
@@ -109,14 +123,15 @@ def init_db():
                 "INSERT INTO processes (process_name, potential, communication, vacancy) VALUES (?, ?, ?, ?)",
                 process
             )
-    
-    conn.commit()
-    
-    # Only close file-based connections
-    if DB_PATH != ':memory:':
+        
+        conn.commit()
         conn.close()
-    
-    print(f"Database initialized at {DB_PATH} (cloud mode: {is_cloud}, thread: {threading.get_ident()})")
+        
+        print(f"Database initialized at {DB_PATH} (cloud mode: {is_cloud}, thread: {threading.get_ident()})")
+    except Exception as e:
+        print(f"Error during database initialization: {str(e)}")
+        # Don't crash the app if database initialization fails
+        return None
 
 def save_processes_to_db(process_data):
     """
@@ -125,23 +140,27 @@ def save_processes_to_db(process_data):
     Args:
         process_data: DataFrame containing process information
     """
-    conn = get_connection()
-    
-    # Clear existing processes
-    conn.execute("DELETE FROM processes")
-    
-    # Insert new processes
-    for _, row in process_data.iterrows():
-        conn.execute(
-            "INSERT INTO processes (process_name, potential, communication, vacancy) VALUES (?, ?, ?, ?)",
-            (row['Process_Name'], row['Potential'], row['Communication'], row['Vacancy'])
-        )
-    
-    conn.commit()
-    
-    # Only close file-based connections
-    if DB_PATH != ':memory:':
+    try:
+        conn = get_connection()
+        
+        # Clear existing processes
+        conn.execute("DELETE FROM processes")
+        
+        # Insert new processes
+        for _, row in process_data.iterrows():
+            conn.execute(
+                "INSERT INTO processes (process_name, potential, communication, vacancy) VALUES (?, ?, ?, ?)",
+                (row['Process_Name'], row['Potential'], row['Communication'], row['Vacancy'])
+            )
+        
+        conn.commit()
         conn.close()
+        
+        print(f"Saved {len(process_data)} processes to database")
+        return True
+    except Exception as e:
+        print(f"Error saving processes to database: {str(e)}")
+        return False
 
 def load_processes_from_db():
     """
@@ -150,25 +169,24 @@ def load_processes_from_db():
     Returns:
         DataFrame: Processes data or None if database is empty
     """
-    # Ensure database is initialized
-    init_db()  # Make sure tables exist
-    
-    # Ensure we have a clean connection
-    conn = get_connection()
-    
-    # Check if we have any processes
-    cursor = conn.cursor()
-    
     try:
+        # Ensure database is initialized
+        init_db()  # Make sure tables exist
+        
+        # Get a clean connection
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Check if we have any processes
         cursor.execute("SELECT COUNT(*) FROM processes")
         count = cursor.fetchone()[0]
         
         if count == 0:
-            if DB_PATH != ':memory:':
-                conn.close()
+            conn.close()
+            print("No processes found in database")
             return None
         
-        # Load processes into DataFrame - use explicit ORDER BY for consistent results
+        # Load processes into DataFrame with explicit ORDER BY for consistent results
         df = pd.read_sql("""
             SELECT 
                 process_name as Process_Name, 
@@ -179,21 +197,17 @@ def load_processes_from_db():
             ORDER BY vacancy DESC, process_name ASC
         """, conn)
         
+        # Always close connection
+        conn.close()
+        
         # Debug info for tracking
         print(f"Loaded {len(df)} processes from database")
         if not df.empty:
             print(df[['Process_Name', 'Vacancy']].head(5).to_string())
-        
-        # Only close file-based connections
-        if DB_PATH != ':memory:':
-            conn.close()
             
         return df
     except Exception as e:
         print(f"Error loading processes: {str(e)}")
-        # Only close file-based connections on error
-        if DB_PATH != ':memory:':
-            conn.close()
         return None
 
 def update_process_vacancy(process_name, change):
@@ -700,17 +714,9 @@ def delete_employee(employee_id):
 
 def purge_deleted_emails():
     """Force cleanup of database to remove any lingering deleted emails"""
-    # For cloud deployment, we'll skip all operations
-    if is_cloud:
-        return
-        
     try:
-        # For in-memory database, we don't need to vacuum
-        if DB_PATH == ':memory:':
-            return
-            
-        # Use a new connection for file database vacuum
-        conn = sqlite3.connect(DB_PATH)
+        # Vacuum the database to reclaim space and improve performance
+        conn = get_connection()
         conn.execute("VACUUM")
         conn.commit()
         conn.close()
@@ -722,21 +728,43 @@ def purge_deleted_emails():
 
 def reset_database():
     """Hard reset of the database - for emergency use"""
-    import os
-    
-    # Close any open connections
     try:
+        # Close any open connections
+        try:
+            conn = get_connection()
+            conn.close()
+        except:
+            pass
+        
+        # Delete the database file if it exists and we're not in cloud mode
+        if not is_cloud and os.path.exists(DB_PATH):
+            try:
+                os.remove(DB_PATH)
+                print(f"Database file {DB_PATH} removed")
+            except Exception as e:
+                print(f"Error removing database file: {str(e)}")
+        
+        # For cloud mode or if file deletion failed, just clear all tables
         conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Drop tables if they exist
+        cursor.execute("DROP TABLE IF EXISTS employees")
+        cursor.execute("DROP TABLE IF EXISTS processes")
+        conn.commit()
+        
+        # Recreate the database
+        init_schema(conn)
         conn.close()
-    except:
-        pass
-    
-    # Delete the database file if it exists
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
-    
-    # Recreate the database
-    init_db()
+        
+        # Initialize with sample data
+        init_db()
+        
+        print("Database has been reset")
+        return True
+    except Exception as e:
+        print(f"Error resetting database: {str(e)}")
+        return False
 
 def get_process_suggestions(potential, communication):
     """

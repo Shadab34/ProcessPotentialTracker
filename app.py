@@ -193,16 +193,26 @@ else:
         # Filter controls
         filter_col1, filter_col2 = st.columns(2)
         with filter_col1:
+            # Add a check to ensure process_data is not None before accessing it
+            potential_options = ['All']
+            if st.session_state.process_data is not None:
+                potential_options += sorted(st.session_state.process_data['Potential'].unique().tolist())
+            
             potential_filter = st.multiselect(
                 "Filter by Potential",
-                options=['All'] + sorted(st.session_state.process_data['Potential'].unique().tolist()),
+                options=potential_options,
                 default='All'
             )
         
         with filter_col2:
+            # Add a similar check for communication options
+            communication_options = ['All']
+            if st.session_state.process_data is not None:
+                communication_options += sorted(st.session_state.process_data['Communication'].unique().tolist())
+                
             communication_filter = st.multiselect(
                 "Filter by Communication",
-                options=['All'] + sorted(st.session_state.process_data['Communication'].unique().tolist()),
+                options=communication_options,
                 default='All'
             )
         
