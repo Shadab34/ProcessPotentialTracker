@@ -644,6 +644,10 @@ def delete_employee(employee_id):
 
 def purge_deleted_emails():
     """Force cleanup of database to remove any lingering deleted emails"""
+    # For cloud deployment, we'll skip complex operations that might fail
+    if is_cloud:
+        return
+        
     try:
         # For in-memory database, we don't need to vacuum
         if DB_PATH == ':memory:':
