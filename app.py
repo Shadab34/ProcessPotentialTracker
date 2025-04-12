@@ -4,11 +4,19 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+import os
 
 from data_handler import load_data, save_data
 from matching_engine import find_matching_process
 from visualization import create_vacancy_chart, create_process_distribution
 import database as db
+
+# Check if running in Streamlit Cloud
+is_cloud = os.environ.get('IS_STREAMLIT_CLOUD') != 'true'
+if not is_cloud:
+    # Set the environment variable for cloud mode
+    os.environ['IS_STREAMLIT_CLOUD'] = 'true'
+    print("Running in Streamlit Cloud mode - using in-memory database")
 
 # Set page config
 st.set_page_config(

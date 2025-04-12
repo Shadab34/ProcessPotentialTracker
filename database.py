@@ -2,17 +2,28 @@ import sqlite3
 import pandas as pd
 import os
 from datetime import datetime
+import streamlit as st
+
+# Check if we're running in the cloud
+is_cloud = os.environ.get('IS_STREAMLIT_CLOUD') == 'true'
 
 # Database file path
-DB_PATH = 'employee_process_matcher.db'
+DB_PATH = ':memory:' if is_cloud else 'employee_process_matcher.db'
+
+def get_connection():
+    """Get a database connection"""
+    return sqlite3.connect(DB_PATH)
 
 def init_db():
     """Initialize the database with required tables if they don't exist."""
-    # Remove existing database to ensure we have the correct schema
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+    # Only remove existing database in local mode
+    if not is_cloud and os.path.exists(DB_PATH):
+        try:
+            os.remove(DB_PATH)
+        except:
+            print(f"Could not remove existing database at {DB_PATH}")
         
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
     # Create process table
@@ -42,8 +53,32 @@ def init_db():
     )
     ''')
     
+    # If in cloud mode, add sample data
+    if is_cloud and DB_PATH == ':memory:':
+        # Sample process data
+        sample_processes = [
+            ('Sales Support', 'Sales', 'Good', 5),
+            ('Customer Service', 'Service', 'Very Good', 3),
+            ('Technical Support', 'Support', 'Good', 4),
+            ('Account Management', 'Consultation', 'Excellent', 2),
+            ('TVS CC', 'Service', 'Good', 20),
+            ('CW Massbrand', 'Consultation', 'Excellent', 9),
+            ('CW Inbound', 'Service', 'Good', 8),
+            ('Bgauss CC', 'Service', 'Good', 3),
+            ('Ather CC', 'Service', 'Good', 2)
+        ]
+        
+        # Insert sample processes
+        for process in sample_processes:
+            cursor.execute(
+                "INSERT INTO processes (process_name, potential, communication, vacancy) VALUES (?, ?, ?, ?)",
+                process
+            )
+    
     conn.commit()
     conn.close()
+    
+    print(f"Database initialized at {DB_PATH} (cloud mode: {is_cloud})")
 
 def save_processes_to_db(process_data):
     """
@@ -52,7 +87,7 @@ def save_processes_to_db(process_data):
     Args:
         process_data: DataFrame containing process information
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     
     # Clear existing processes
     conn.execute("DELETE FROM processes")
@@ -75,10 +110,7 @@ def load_processes_from_db():
         DataFrame: Processes data or None if database is empty
     """
     # Ensure we have a clean connection
-    conn = sqlite3.connect(DB_PATH, isolation_level=None)
-    conn.execute("PRAGMA journal_mode = WAL")  # Use WAL mode for better concurrency
-    conn.execute("PRAGMA synchronous = NORMAL")  # Balance durability and speed
-    conn.execute("PRAGMA cache_size = -64000")  # Use a 64MB cache
+    conn = get_connection()
     
     # Check if we have any processes
     cursor = conn.cursor()
@@ -102,7 +134,8 @@ def load_processes_from_db():
     
     # Debug info for tracking
     print(f"Loaded {len(df)} processes from database")
-    print(df[['Process_Name', 'Vacancy']].head(5).to_string())
+    if not df.empty:
+        print(df[['Process_Name', 'Vacancy']].head(5).to_string())
     
     conn.close()
     return df
@@ -119,7 +152,7 @@ def update_process_vacancy(process_name, change):
         bool: True if successful, False otherwise
     """
     # Open a new connection to ensure we're getting the latest data
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
     # Use direct SQL for atomic update to avoid race conditions
@@ -151,7 +184,7 @@ def update_process_vacancy(process_name, change):
     conn.close()
     
     # Verify the update happened correctly
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT vacancy FROM processes WHERE process_name = ?", (process_name,))
     result = cursor.fetchone()
@@ -179,7 +212,7 @@ def add_employee(name, email, potential, communication, process_name=None):
     purge_deleted_emails()
     
     # Create a fresh connection for this transaction
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
     try:
@@ -274,7 +307,7 @@ def get_employee_assignments():
     Returns:
         DataFrame: Employee assignments data
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     
     query = """
     SELECT e.id, e.name, e.email, e.potential, e.communication, 
@@ -295,7 +328,7 @@ def get_assignment_history():
     Returns:
         DataFrame: Assignment history with counts by date
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     
     query = """
     SELECT 
@@ -326,7 +359,7 @@ def find_employee_by_email(email):
     # First run a purge to ensure we have no deleted records
     purge_deleted_emails()
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
     # Normalize email for case-insensitive search
@@ -390,7 +423,7 @@ def update_employee(employee_id, name, email, potential, communication, process_
     # Clean up the database first
     purge_deleted_emails()
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
     try:
@@ -525,7 +558,7 @@ def delete_employee(employee_id):
         bool: True if successful, False otherwise
         str: Message with result
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
     try:
@@ -611,33 +644,13 @@ def delete_employee(employee_id):
 
 def purge_deleted_emails():
     """Force cleanup of database to remove any lingering deleted emails"""
-    # Enhanced version to ensure all deleted records are truly gone
     try:
-        conn = sqlite3.connect(DB_PATH)
-        
-        # First, ensure we have no orphaned records
-        conn.execute("PRAGMA foreign_keys = ON")
-        
-        # Perform integrity check
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA integrity_check")
-        integrity_result = cursor.fetchone()[0]
-        if integrity_result != "ok":
-            print(f"WARNING: Database integrity check failed with: {integrity_result}")
+        # For in-memory database, we don't need to vacuum
+        if DB_PATH == ':memory:':
+            return
             
-        # Run VACUUM to reclaim space and rebuild the database
+        conn = get_connection()
         conn.execute("VACUUM")
-        
-        # Analyze the database to update statistics
-        conn.execute("ANALYZE")
-        
-        # Explicitly check for any deleted IDs that might still exist
-        cursor.execute("SELECT id FROM sqlite_sequence WHERE name = 'employees'")
-        result = cursor.fetchone()
-        if result:
-            last_id = result[0]
-            print(f"Last employee ID: {last_id}")
-        
         conn.commit()
         conn.close()
         
@@ -651,7 +664,7 @@ def reset_database():
     
     # Close any open connections
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.close()
     except:
         pass
@@ -674,7 +687,7 @@ def get_process_suggestions(potential, communication):
     Returns:
         DataFrame: Process suggestions
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     
     # Query to get matching processes sorted by vacancy
     query = """
