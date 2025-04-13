@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Streamlit
+.streamlit/watch/
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Log files
+*.log
+
+# Upload directories
+uploaded_files/
+processed_uploads/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Cache
+.cache/ 
