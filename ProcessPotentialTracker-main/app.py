@@ -101,14 +101,31 @@ with st.sidebar:
         
         if uploaded_file is not None:
             try:
-                st.session_state.process_data = load_data(uploaded_file)
+                # Process the uploaded file
+                loaded_data = load_data(uploaded_file)
+                
+                # Debug information
+                st.session_state['debug_data_shape'] = loaded_data.shape
+                print(f"Uploaded file processed, shape: {loaded_data.shape}")
                 
                 # Save to database
-                db.save_processes_to_db(st.session_state.process_data)
+                success = db.save_processes_to_db(loaded_data)
                 
-                st.success(f"Successfully loaded {len(st.session_state.process_data)} processes!")
+                if success:
+                    # Force refresh from database to ensure UI is updated
+                    st.session_state.process_data = db.load_processes_from_db()
+                    st.success(f"Successfully loaded {len(st.session_state.process_data)} processes!")
+                    
+                    # Add refresh button
+                    if st.button("Data doesn't look right? Click to refresh"):
+                        refresh_data()
+                        st.rerun()
+                else:
+                    st.error("Failed to save data to database. Please try again.")
             except Exception as e:
                 st.error(f"Error loading data: {str(e)}")
+                import traceback
+                st.text(traceback.format_exc())
     
     with download_tab:
         if st.session_state.process_data is not None:
@@ -134,6 +151,12 @@ with st.sidebar:
             st.button("View History", 
                      on_click=lambda: setattr(st.session_state, 'show_history', True),
                      use_container_width=True)
+        
+        # Add refresh button
+        st.button("🔄 Refresh Data", 
+                 on_click=refresh_data,
+                 use_container_width=True,
+                 help="Refresh data from database")
 
 # Main content area
 if st.session_state.process_data is None:

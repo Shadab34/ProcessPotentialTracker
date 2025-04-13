@@ -3,7 +3,7 @@ import numpy as np
 
 def find_matching_process(process_data, potential, communication):
     """
-    Find matching processes for an employee based on potential and communication skills
+    Find ALL matching processes for an employee based on potential and communication skills
     
     Args:
         process_data: DataFrame containing process information
@@ -11,29 +11,47 @@ def find_matching_process(process_data, potential, communication):
         communication: Employee's communication level (Excellent, Good, Very Good)
     
     Returns:
-        DataFrame: All matching processes with vacancies
+        DataFrame: All matching processes with vacancies or None if no matches
     """
     if process_data is None or process_data.empty:
+        print("No process data available")
         return None
         
-    # Filter processes by potential and communication
-    matching_processes = process_data[
-        (process_data['Potential'].str.strip() == potential.strip()) & 
-        (process_data['Communication'].str.strip() == communication.strip()) &
-        (process_data['Vacancy'] > 0)
+    # Clean the input parameters
+    potential = potential.strip()
+    communication = communication.strip()
+    
+    print(f"Finding matches for potential: '{potential}', communication: '{communication}'")
+    print(f"Process data has {len(process_data)} rows")
+    
+    # Make a clean copy with stripped values to avoid whitespace issues
+    clean_data = process_data.copy()
+    clean_data['Potential'] = clean_data['Potential'].astype(str).str.strip()
+    clean_data['Communication'] = clean_data['Communication'].astype(str).str.strip()
+    
+    # Filter processes by potential and communication with exact matching
+    matching_processes = clean_data[
+        (clean_data['Potential'] == potential) & 
+        (clean_data['Communication'] == communication) &
+        (clean_data['Vacancy'] > 0)
     ].copy()
     
-    # If no exact matches, try to find matches with only potential
+    # If no exact matches, try matching only by potential
     if matching_processes.empty:
-        matching_processes = process_data[
-            (process_data['Potential'].str.strip() == potential.strip()) & 
-            (process_data['Vacancy'] > 0)
+        print(f"No exact matches found, trying to match by potential only")
+        matching_processes = clean_data[
+            (clean_data['Potential'] == potential) & 
+            (clean_data['Vacancy'] > 0)
         ].copy()
     
-    # Sort by vacancy (higher vacancy first) and process name
+    # Sort by vacancy count (higher first) and then process name
     if not matching_processes.empty:
-        matching_processes = matching_processes.sort_values(['Vacancy', 'Process_Name'], ascending=[False, True])
+        matching_processes = matching_processes.sort_values(
+            ['Vacancy', 'Process_Name'], 
+            ascending=[False, True]
+        )
         print(f"Found {len(matching_processes)} matching processes with total {matching_processes['Vacancy'].sum()} vacancies")
+        print(f"First few matches: {matching_processes[['Process_Name', 'Vacancy']].head(3).to_dict('records')}")
         return matching_processes
     else:
         print(f"No matching processes found for Potential: {potential}, Communication: {communication}")

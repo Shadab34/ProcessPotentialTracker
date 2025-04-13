@@ -133,22 +133,51 @@ def save_processes_to_db(process_data):
         process_data: DataFrame containing process information
     """
     try:
+        if process_data is None or len(process_data) == 0:
+            print("Warning: No process data to save")
+            return False
+            
+        print(f"Saving {len(process_data)} processes to database...")
+        
+        # Debug information
+        print(f"Process data columns: {process_data.columns.tolist()}")
+        print(f"First few rows:\n{process_data.head(3)}")
+        
         conn = get_connection()
         
         # Clear existing processes
-        conn.execute("DELETE FROM processes")
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM processes")
+        print(f"Deleted existing processes")
+        
+        # Prepare data with proper string cleaning
+        process_data['Process_Name'] = process_data['Process_Name'].astype(str).str.strip()
+        process_data['Potential'] = process_data['Potential'].astype(str).str.strip()
+        process_data['Communication'] = process_data['Communication'].astype(str).str.strip()
         
         # Insert new processes
         for _, row in process_data.iterrows():
-            conn.execute(
+            cursor.execute(
                 "INSERT INTO processes (process_name, potential, communication, vacancy) VALUES (?, ?, ?, ?)",
-                (row['Process_Name'], row['Potential'], row['Communication'], row['Vacancy'])
+                (
+                    row['Process_Name'], 
+                    row['Potential'], 
+                    row['Communication'], 
+                    int(row['Vacancy'])
+                )
             )
         
+        # Commit and close
         conn.commit()
+        
+        # Verify the data was inserted properly
+        cursor.execute("SELECT COUNT(*) FROM processes")
+        count = cursor.fetchone()[0]
+        print(f"Inserted {count} processes in database (expected {len(process_data)})")
+        
         conn.close()
         
-        print(f"Saved {len(process_data)} processes to database")
+        print(f"Successfully saved {len(process_data)} processes to database")
         return True
     except Exception as e:
         print(f"Error saving processes to database: {str(e)}")
@@ -767,23 +796,82 @@ def get_process_suggestions(potential, communication):
         communication: Employee communication level
     
     Returns:
-        DataFrame: Process suggestions
+        DataFrame: Process suggestions with all matching processes
     """
-    conn = get_connection()
+    try:
+        # Clean the input parameters
+        potential = potential.strip()
+        communication = communication.strip()
+        
+        print(f"Getting suggestions for potential: '{potential}', communication: '{communication}'")
+        
+        conn = get_connection()
+        
+        # Query to get EXACT matching processes first
+        exact_match_query = """
+        SELECT 
+            id,
+            process_name as Process_Name, 
+            potential as Potential, 
+            communication as Communication, 
+            vacancy as Vacancy,
+            3 as relevance  -- Highest relevance for exact matches (both potential and communication)
+        FROM processes
+        WHERE TRIM(potential) = ? AND TRIM(communication) = ? AND vacancy > 0
+        """
+        
+        # Query to get potential-only matching processes
+        potential_match_query = """
+        SELECT 
+            id,
+            process_name as Process_Name, 
+            potential as Potential, 
+            communication as Communication, 
+            vacancy as Vacancy,
+            2 as relevance  -- Medium relevance for potential match only
+        FROM processes
+        WHERE TRIM(potential) = ? AND TRIM(communication) != ? AND vacancy > 0
+        """
+        
+        # Query to get communication-only matching processes
+        communication_match_query = """
+        SELECT 
+            id,
+            process_name as Process_Name, 
+            potential as Potential, 
+            communication as Communication, 
+            vacancy as Vacancy,
+            1 as relevance  -- Lower relevance for communication match only
+        FROM processes
+        WHERE TRIM(potential) != ? AND TRIM(communication) = ? AND vacancy > 0
+        """
+        
+        # Execute all three queries
+        exact_matches = pd.read_sql(exact_match_query, conn, params=(potential, communication))
+        potential_matches = pd.read_sql(potential_match_query, conn, params=(potential, communication))
+        communication_matches = pd.read_sql(communication_match_query, conn, params=(potential, communication))
+        
+        # Combine all results
+        all_matches = pd.concat([exact_matches, potential_matches, communication_matches], ignore_index=True)
+        
+        # Close the connection
+        conn.close()
+        
+        # If we have matches, sort them by relevance and vacancy
+        if not all_matches.empty:
+            sorted_matches = all_matches.sort_values(
+                ['relevance', 'Vacancy', 'Process_Name'], 
+                ascending=[False, False, True]
+            )
+            print(f"Found {len(sorted_matches)} process suggestions")
+            return sorted_matches
+        else:
+            print(f"No matching processes found")
+            return pd.DataFrame()  # Return empty DataFrame instead of None
     
-    # Query to get matching processes sorted by vacancy
-    query = """
-    SELECT process_name as Process_Name, potential as Potential, 
-           communication as Communication, vacancy as Vacancy
-    FROM processes
-    WHERE potential = ? AND communication = ? AND vacancy > 0
-    ORDER BY vacancy DESC
-    """
-    
-    df = pd.read_sql(query, conn, params=(potential, communication))
-    conn.close()
-    
-    return df
+    except Exception as e:
+        print(f"Error getting process suggestions: {str(e)}")
+        return pd.DataFrame()  # Return empty DataFrame on error
 
 # Initialize the database on module import
 init_db()
