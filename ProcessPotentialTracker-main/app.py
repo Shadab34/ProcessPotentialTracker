@@ -7,9 +7,12 @@ from io import BytesIO
 import os
 import sys
 
-# IMPORTANT: For local development, force file-based database
-# This prevents SQLite thread issues with in-memory databases
-os.environ['IS_STREAMLIT_CLOUD'] = 'false'
+# IMPORTANT: Only force file-based database for local development
+# Allow Streamlit Cloud to be detected properly
+if 'STREAMLIT' not in os.environ and 'DYNO' not in os.environ and 'PORT' not in os.environ:
+    os.environ['IS_STREAMLIT_CLOUD'] = 'false'
+else:
+    os.environ['IS_STREAMLIT_CLOUD'] = 'true'
 
 # Print environment variables for debugging
 print("Environment variables:")

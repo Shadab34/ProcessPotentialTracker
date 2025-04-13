@@ -14,7 +14,7 @@ A Streamlit application for matching employees to appropriate processes based on
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ProcessPotentialTracker.git
+git clone https://github.com/Shadab34/ProcessPotentialTracker.git
 cd ProcessPotentialTracker
 ```
 
@@ -23,10 +23,22 @@ cd ProcessPotentialTracker
 pip install -r requirements.txt
 ```
 
-3. Run the application:
+3. Run the application locally:
 ```bash
 streamlit run app.py
 ```
+
+## Deployment on Streamlit Cloud
+
+This application is ready for deployment on Streamlit Cloud:
+
+1. Fork this repository to your GitHub account
+2. Go to [Streamlit Cloud](https://streamlit.io/cloud) and sign in
+3. Click "New app" and select your forked repository
+4. Set the main file path to `app.py`
+5. Deploy the application
+
+The application includes the necessary configuration for both local and cloud environments and handles database persistence appropriately in both scenarios.
 
 ## Usage
 
@@ -43,6 +55,13 @@ The application expects process data with the following columns:
 - Potential: Type of potential required (Sales, Service, Support, Consultation)
 - Communication: Level of communication required (Excellent, Very Good, Good)
 - Vacancy: Number of vacant positions
+
+## Solution for Common Issues
+
+If you encounter an issue with the application not showing all matching processes, ensure you're using the latest version which fixes:
+- All matching processes now appear (instead of just the first one)
+- Processes are properly sorted by vacancy count and name
+- Whitespace handling is improved for better matching
 
 ## License
 
